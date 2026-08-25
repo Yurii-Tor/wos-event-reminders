@@ -1,3 +1,5 @@
+import { createReminderDialogState } from "./reminder-copy.js?v=472c097f3c43";
+
 const $ = (selector) => document.querySelector(selector);
 const state = { events: [], archivedEvents: [], deliveries: [] };
 const REMINDERS_API_PATH = "/api/reminders";
@@ -135,10 +137,13 @@ function renderEvents() {
     const edit = element("button", "ghost", "Edit");
     edit.type = "button";
     edit.addEventListener("click", () => openEventDialog(event));
+    const copy = element("button", "ghost", "Copy");
+    copy.type = "button";
+    copy.addEventListener("click", () => openEventDialog(event, "copy"));
     const archive = element("button", "danger", "Archive");
     archive.type = "button";
     archive.addEventListener("click", () => archiveEvent(event));
-    actions.append(edit, archive);
+    actions.append(edit, copy, archive);
     card.append(identity, time, message, actions);
     list.append(card);
   }
@@ -222,30 +227,22 @@ function renderSummary() {
 }
 
 function openEventDialog(event = null, action = "save") {
-  const restoring = action === "restore";
-  $("#dialog-title").textContent = restoring
-    ? "Restore reminder"
-    : event ? "Edit event" : "Add event";
-  $("#event-id").value = event?.id ?? "";
-  $("#event-action").value = action;
-  $("#event-name").value = event?.name ?? "";
-  $("#schedule-type").value = event?.schedule_type ?? "recurring";
-  $("#anchor-date").value = event?.anchor_date ?? new Date().toISOString().slice(0, 10);
-  $("#start-time").value = event?.start_time_utc ?? "15:00";
-  $("#interval-days").value = event?.interval_days ?? 2;
-  $("#reminder-minutes").value = event?.reminder_minutes ?? 10;
-  $("#event-message").value = event?.message ?? "";
-  $("#event-enabled").checked = restoring ? true : event?.enabled ?? true;
-  $("#save-event-button").textContent = restoring ? "Restore reminder" : "Save event";
-  const occurrenceExpired = event?.schedule_type === "one_time"
-    && Date.parse(`${event.anchor_date}T${event.start_time_utc}:00.000Z`) <= Date.now();
+  const dialogState = createReminderDialogState(event, action);
+  $("#dialog-title").textContent = dialogState.title;
+  $("#event-id").value = dialogState.id;
+  $("#event-action").value = dialogState.action;
+  $("#event-name").value = dialogState.values.name;
+  $("#schedule-type").value = dialogState.values.schedule_type;
+  $("#anchor-date").value = dialogState.values.anchor_date;
+  $("#start-time").value = dialogState.values.start_time_utc;
+  $("#interval-days").value = dialogState.values.interval_days;
+  $("#reminder-minutes").value = dialogState.values.reminder_minutes;
+  $("#event-message").value = dialogState.values.message;
+  $("#event-enabled").checked = dialogState.values.enabled;
+  $("#save-event-button").textContent = dialogState.saveLabel;
   const guidance = $("#restore-guidance");
-  guidance.textContent = restoring && occurrenceExpired
-    ? "This one-time occurrence has expired. Choose a future date or time before restoring it."
-    : restoring
-      ? "Review the schedule settings before restoring this reminder."
-      : "";
-  guidance.classList.toggle("hidden", !restoring);
+  guidance.textContent = dialogState.guidance;
+  guidance.classList.toggle("hidden", !dialogState.guidance);
   $("#form-error").textContent = "";
   updateScheduleTypeControls();
   dialog.showModal();
@@ -257,6 +254,7 @@ async function saveEvent(event) {
   const button = event.submitter;
   const id = $("#event-id").value;
   const restoring = $("#event-action").value === "restore";
+  const copying = $("#event-action").value === "copy";
   const payload = {
     name: $("#event-name").value,
     schedule_type: $("#schedule-type").value,
@@ -279,7 +277,9 @@ async function saveEvent(event) {
       body: payload,
     });
     dialog.close();
-    toast(restoring ? "Reminder restored." : id ? "Event updated." : "Event added.");
+    toast(restoring
+      ? "Reminder restored."
+      : copying ? "Reminder copied." : id ? "Event updated." : "Event added.");
     await loadDashboard();
   } catch (error) {
     $("#form-error").textContent = error.message;
