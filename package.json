@@ -9,7 +9,7 @@
     "db:local": "wrangler d1 migrations apply wos-event-reminders-db --local",
     "db:remote": "wrangler d1 migrations apply wos-event-reminders-db --remote",
     "db:staging:migrate": "wrangler d1 migrations apply wos-event-reminders-staging-db --remote --env staging",
-    "preview:staging": "wrangler versions upload --env staging",
+    "preview:staging": "wrangler versions upload --env staging --name wos-event-reminders-staging",
     "test": "node --test"
   },
   "devDependencies": {

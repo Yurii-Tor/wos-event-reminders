@@ -29,7 +29,8 @@ test("remote staging commands select the staging environment explicitly", () => 
   const migrationCommand = packageJson.scripts["db:staging:migrate"];
 
   assert.match(previewCommand, /^wrangler versions upload /);
-  assert.match(previewCommand, /--env staging$/);
+  assert.match(previewCommand, /--env staging/);
+  assert.match(previewCommand, /--name wos-event-reminders-staging$/);
   assert.match(migrationCommand, /wos-event-reminders-staging-db/);
   assert.match(migrationCommand, /--remote/);
   assert.match(migrationCommand, /--env staging$/);

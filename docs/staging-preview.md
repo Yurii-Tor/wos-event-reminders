@@ -14,8 +14,10 @@ always use the named `staging` environment, which creates the separate Worker
    npm run preview:staging
    ```
 
-   This runs `wrangler versions upload --env staging`. Keep the production
-   deploy command unchanged.
+   This runs `wrangler versions upload --env staging --name
+   wos-event-reminders-staging`. The explicit name prevents Workers Builds from
+   overriding the environment-derived Worker name. Keep the production deploy
+   command unchanged.
 
 2. Enter three staging-only secrets interactively. Use a Discord webhook that
    posts only to a staging/test channel. Never reuse the production webhook or
