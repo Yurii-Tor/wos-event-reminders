@@ -45,7 +45,7 @@ export default {
         return createEvent(request, env);
       }
 
-      const eventMatch = url.pathname.match(/^\/api\/events\/(\d+)$/);
+      const eventMatch = url.pathname.match(/^\/api\/reminders\/(\d+)$/);
       if (eventMatch && request.method === "PUT") {
         return updateEvent(request, env, Number(eventMatch[1]));
       }
