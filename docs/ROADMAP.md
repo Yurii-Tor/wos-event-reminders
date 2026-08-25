@@ -24,24 +24,29 @@ An already-implemented ticket that is still moving through preview or release ve
 
 ### Transition state
 
-- `feature/one-time-reminders` has been implemented and merged. Its release gate is complete only when production migration, deployment, smoke-test, and local synchronization evidence are all recorded.
-- `feature/reminder-archive` was already implemented before this roadmap update and its pull request has been merged. Do not alter or restart that implementation as part of roadmap work. It must finish every remaining production release gate before `feature/copy-reminders` begins.
-- `feature/copy-reminders` is queued only. No implementation may begin until both the one-time-reminders release evidence and the in-flight reminder-archive release gates are complete.
+- `feature/one-time-reminders` has completed its production migration, merge, production deployment, smoke test, and clean-local-default-branch gates.
+- `feature/reminder-archive` was already implemented before this roadmap update and has completed its production migrations, merge, production deployment, smoke test, and clean-local-default-branch gates. Do not alter or restart that implementation as part of roadmap work.
+- `feature/copy-reminders` was created only after those release gates completed. It is now the current ticket at its manual preview gate. Do not modify its approved preview commit or begin its production release without explicit preview approval.
 - `feature/history-reminder-type-label` is queued after copy-reminders and may begin only after copy-reminders completes every release gate.
 
-The requested numbering is retained even though reminder-archive is an in-flight transition item. Its existing implementation is not a reason to bypass any release gate or to begin copy-reminders early.
+The requested numbering is retained. Reminder-archive's earlier out-of-order release is recorded as a completed transition and does not change the remaining gate order.
 
 ## Ticket: one-time reminders
 
 - **Branch:** `feature/one-time-reminders`
-- **Status:** implemented and merged; retain the release evidence required by the sequencing rule.
+- **Status:** fully released; production migration `0002_one_time_reminders.sql` applied and release gates verified.
 - **Dependency for later work:** both recurring and one-time reminder behavior must remain supported.
 
 ## Ticket: copy reminders
 
 - **Branch:** `feature/copy-reminders`
-- **Status:** queued; do not begin during the current ticket's preview or production release workflow.
-- **Dependency:** implement only after one-time reminders are merged and verified in production and the current in-flight ticket has completed all repository delivery gates.
+- **Status:** implementation complete and stopped at the manual preview gate. PR #4 remains open and unmerged.
+- **Preview commit:** `e684c5ca21909f8e539f853a122c207b7ab865f1`.
+- **Automated verification:** 32 tests passed; syntax and diff checks passed.
+- **D1 migration:** none.
+- **Cloudflare preview:** successful staging build, version `6c31d9f4-8114-46ff-be87-f32a8ef8d5fb`, at `https://feature-copy-reminders-wos-event-reminders-staging.chute-risk9361.workers.dev`.
+- **Next gate:** explicit manual preview approval. Do not merge or deploy production before approval.
+- **Dependency (satisfied):** implementation began only after one-time reminders were merged and verified in production and reminder-archive completed all repository delivery gates.
 - **Compatibility:** correctly support both recurring and one-time reminders.
 
 ### User experience
@@ -130,5 +135,5 @@ Tests must cover:
 ## Ticket: reminder archive
 
 - **Branch:** `feature/reminder-archive`
-- **Status:** implemented and merged before this roadmap update; release verification remains governed by the mandatory gates.
-- **Transition rule:** do not modify its implementation for the copy-reminders roadmap update, and do not begin copy reminders until its production migration, deployment, smoke test, and clean-local-default-branch evidence are complete.
+- **Status:** fully released before copy-reminders began. Production migrations `0003_reminder_archive.sql` and `0004_preserve_deleted_delivery_history.sql` were applied successfully; deployment and smoke-test gates passed.
+- **Transition rule:** do not modify or restart its implementation for later roadmap tickets.
