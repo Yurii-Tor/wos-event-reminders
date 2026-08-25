@@ -21,5 +21,21 @@
   },
   "observability": {
     "enabled": true
+  },
+  "env": {
+    "staging": {
+      "workers_dev": true,
+      "vars": {
+        "APP_ENVIRONMENT": "staging"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "wos-event-reminders-staging-db",
+          "database_id": "0b5699b4-4307-41f2-853e-c64a72d80c26",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
   }
 }

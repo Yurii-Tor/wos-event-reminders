@@ -23,7 +23,7 @@ test("frontend uses the Worker's canonical reminder collection path for all CRUD
 
 test("index cache-busts app.js with its current content hash", () => {
   const expectedVersion = createHash("sha256")
-    .update(appSource)
+    .update(appSource.replace(/\r\n/g, "\n"))
     .digest("hex")
     .slice(0, 12);
   const referencedVersion = indexSource.match(

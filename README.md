@@ -108,6 +108,15 @@ npx wrangler deploy
 
 The D1 data and encrypted secrets remain attached to the Worker.
 
+## Isolated non-production previews
+
+Feature branches must use the named `staging` environment. It creates the
+separate `wos-event-reminders-staging` Worker and binds only the separate
+`wos-event-reminders-staging-db` D1 database. Before testing a feature branch,
+follow [docs/staging-preview.md](docs/staging-preview.md). Do not use the
+default `wrangler versions upload` command for branch previews because the
+default environment is bound to production resources.
+
 ## Security
 
 - Do not place the Discord webhook URL, dashboard password or session secret in `wrangler.jsonc`, source code, Git or screenshots.
