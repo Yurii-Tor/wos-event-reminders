@@ -5,6 +5,7 @@ const DELIVERY_CLAIM_LEASE_MS = 5 * 60 * 1000;
 const MAX_DELIVERY_ATTEMPTS = 3;
 const REMINDERS_API_PATH = "/api/reminders";
 const LEGACY_EVENTS_API_PATH = "/api/events";
+const ARCHIVE_API_PATH = "/api/archive";
 
 class RequestError extends Error {
   constructor(message, status = 400) {
@@ -50,6 +51,7 @@ export default {
       const reminderRoute = matchReminderApiPath(url.pathname);
 
       if (reminderRoute?.id === null && request.method === "GET") {
+        await archiveExpiredOneTimeEvents(env, Date.now());
         await normalizeOverdueEvents(env, Date.now());
         return await listEvents(env);
       }
@@ -62,7 +64,22 @@ export default {
         return await updateEvent(request, env, reminderRoute.id);
       }
       if (reminderRoute && reminderRoute.id !== null && request.method === "DELETE") {
-        return await deleteEvent(env, reminderRoute.id);
+        return await archiveEvent(env, reminderRoute.id);
+      }
+
+      const archiveRoute = matchArchiveApiPath(url.pathname);
+
+      if (archiveRoute?.id === null && request.method === "GET") {
+        await archiveExpiredOneTimeEvents(env, Date.now());
+        return await listArchivedEvents(env);
+      }
+
+      if (archiveRoute && archiveRoute.id !== null && request.method === "PUT") {
+        return await restoreArchivedEvent(request, env, archiveRoute.id);
+      }
+
+      if (archiveRoute && archiveRoute.id !== null && request.method === "DELETE") {
+        return await permanentlyDeleteEvent(env, archiveRoute.id);
       }
 
       if (url.pathname === "/api/deliveries" && request.method === "GET") {
@@ -87,7 +104,9 @@ export default {
   },
 
   async scheduled(controller, env) {
-    await processDueEvents(env, controller.scheduledTime || Date.now());
+    const nowMs = controller.scheduledTime || Date.now();
+    await archiveExpiredOneTimeEvents(env, nowMs);
+    await processDueEvents(env, nowMs);
   },
 };
 
@@ -97,6 +116,12 @@ export function matchReminderApiPath(pathname) {
   }
 
   const match = pathname.match(/^\/api\/(?:reminders|events)\/(\d+)$/);
+  return match ? { id: Number(match[1]) } : null;
+}
+
+export function matchArchiveApiPath(pathname) {
+  if (pathname === ARCHIVE_API_PATH) return { id: null };
+  const match = pathname.match(/^\/api\/archive\/(\d+)$/);
   return match ? { id: Number(match[1]) } : null;
 }
 
@@ -150,19 +175,13 @@ async function listEvents(env) {
     `SELECT id, name, anchor_date, start_time_utc, interval_days,
             reminder_minutes, message, enabled, next_reminder_at, schedule_type,
             terminal_status, completed_at, failed_at, last_sent_at,
-            created_at, updated_at
+            archived_at, archived_reason, created_at, updated_at
        FROM events
+      WHERE archived_at IS NULL
       ORDER BY enabled DESC, next_reminder_at ASC`,
   ).all();
 
-  const events = results.map((event) => ({
-    ...event,
-    enabled: Boolean(event.enabled),
-    next_start_at: new Date(
-      Date.parse(event.next_reminder_at) + event.reminder_minutes * 60_000,
-    ).toISOString(),
-  }));
-  return json({ events });
+  return json({ events: serializeEvents(results) });
 }
 
 async function createEvent(request, env) {
@@ -203,7 +222,7 @@ async function updateEvent(request, env, id) {
             next_reminder_at = ?, schedule_type = ?, terminal_status = NULL,
             completed_at = NULL, failed_at = NULL,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-      WHERE id = ?`,
+      WHERE id = ? AND archived_at IS NULL`,
   )
     .bind(
       input.name,
@@ -223,13 +242,98 @@ async function updateEvent(request, env, id) {
   return json({ ok: true });
 }
 
-async function deleteEvent(env, id) {
-  const [, result] = await env.DB.batch([
-    env.DB.prepare("DELETE FROM deliveries WHERE event_id = ?").bind(id),
-    env.DB.prepare("DELETE FROM events WHERE id = ?").bind(id),
-  ]);
+export async function archiveEvent(env, id) {
+  const result = await env.DB.prepare(
+    `UPDATE events
+        SET enabled = 0, archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            archived_reason = 'manual',
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = ? AND archived_at IS NULL`,
+  )
+    .bind(id)
+    .run();
   if (!result.meta.changes) return json({ error: "Event not found" }, 404);
   return json({ ok: true });
+}
+
+async function listArchivedEvents(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT id, name, anchor_date, start_time_utc, interval_days,
+            reminder_minutes, message, enabled, next_reminder_at, schedule_type,
+            terminal_status, completed_at, failed_at, last_sent_at,
+            archived_at, archived_reason, created_at, updated_at
+       FROM events
+      WHERE archived_at IS NOT NULL
+      ORDER BY archived_at DESC`,
+  ).all();
+
+  return json({ events: serializeEvents(results) });
+}
+
+export async function restoreArchivedEvent(request, env, id) {
+  const input = validateEventInput(await readJson(request));
+  const nextReminder = computeReminderForSchedule(input, Date.now());
+  const result = await env.DB.prepare(
+    `UPDATE events
+        SET name = ?, anchor_date = ?, start_time_utc = ?, interval_days = ?,
+            reminder_minutes = ?, message = ?, enabled = ?,
+            next_reminder_at = ?, schedule_type = ?, terminal_status = NULL,
+            completed_at = NULL, failed_at = NULL, archived_at = NULL,
+            archived_reason = NULL,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = ? AND archived_at IS NOT NULL`,
+  )
+    .bind(
+      input.name,
+      input.anchor_date,
+      input.start_time_utc,
+      input.interval_days,
+      input.reminder_minutes,
+      input.message,
+      input.enabled ? 1 : 0,
+      nextReminder,
+      input.schedule_type,
+      id,
+    )
+    .run();
+
+  if (!result.meta.changes) return json({ error: "Archived event not found" }, 404);
+  return json({ ok: true });
+}
+
+export async function permanentlyDeleteEvent(env, id) {
+  const result = await env.DB.prepare(
+    "DELETE FROM events WHERE id = ? AND archived_at IS NOT NULL",
+  )
+    .bind(id)
+    .run();
+  if (!result.meta.changes) return json({ error: "Archived event not found" }, 404);
+  return json({ ok: true });
+}
+
+export async function archiveExpiredOneTimeEvents(env, nowMs) {
+  const nowIso = new Date(nowMs).toISOString();
+  return env.DB.prepare(
+    `UPDATE events
+        SET archived_at = ?, archived_reason = 'expired',
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE archived_at IS NULL
+        AND schedule_type = 'one_time'
+        AND enabled = 0
+        AND (anchor_date || 'T' || start_time_utc || ':00.000Z') <= ?`,
+  )
+    .bind(nowIso, nowIso)
+    .run();
+}
+
+function serializeEvents(results) {
+  return results.map((event) => ({
+    ...event,
+    enabled: Boolean(event.enabled),
+    next_start_at: new Date(
+      Date.parse(event.next_reminder_at) + event.reminder_minutes * 60_000,
+    ).toISOString(),
+  }));
 }
 
 async function listDeliveries(env) {
@@ -249,7 +353,7 @@ async function processDueEvents(env, nowMs) {
   const { results } = await env.DB.prepare(
     `SELECT id, name, interval_days, message, next_reminder_at, schedule_type
        FROM events
-      WHERE enabled = 1 AND next_reminder_at <= ?
+      WHERE enabled = 1 AND archived_at IS NULL AND next_reminder_at <= ?
       ORDER BY next_reminder_at ASC
       LIMIT 25`,
   )
@@ -267,6 +371,7 @@ export async function normalizeOverdueEvents(env, nowMs) {
     `SELECT id, interval_days, next_reminder_at, schedule_type
        FROM events
       WHERE enabled = 1
+        AND archived_at IS NULL
         AND schedule_type = 'recurring'
         AND next_reminder_at < ?`,
   )
@@ -327,9 +432,13 @@ export async function deliverEvent(env, event) {
         AND (
           (status = 'pending' AND (attempts = 0 OR attempted_at < ?))
           OR status = 'failed'
+        )
+        AND EXISTS (
+          SELECT 1 FROM events
+           WHERE id = ? AND enabled = 1 AND archived_at IS NULL
         )`,
   )
-    .bind(attemptedAt, delivery.id, delivery.attempts, staleClaimBefore)
+    .bind(attemptedAt, delivery.id, delivery.attempts, staleClaimBefore, event.id)
     .run();
 
   if (!claim.meta.changes) return;
@@ -344,13 +453,15 @@ export async function deliverEvent(env, event) {
               SET last_sent_at = ?, enabled = 0, terminal_status = 'completed',
                   completed_at = ?, failed_at = NULL,
                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            WHERE id = ? AND next_reminder_at = ? AND schedule_type = 'one_time'`,
+            WHERE id = ? AND next_reminder_at = ?
+              AND schedule_type = 'one_time' AND archived_at IS NULL`,
         ).bind(sentAt, sentAt, event.id, event.next_reminder_at)
       : env.DB.prepare(
           `UPDATE events
               SET last_sent_at = ?, next_reminder_at = ?,
                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            WHERE id = ? AND next_reminder_at = ? AND schedule_type = 'recurring'`,
+            WHERE id = ? AND next_reminder_at = ?
+              AND schedule_type = 'recurring' AND archived_at IS NULL`,
         ).bind(
           sentAt,
           addDays(event.next_reminder_at, event.interval_days),
@@ -388,7 +499,8 @@ async function advanceEvent(env, event) {
     `UPDATE events
         SET next_reminder_at = ?,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-      WHERE id = ? AND next_reminder_at = ? AND schedule_type = 'recurring'`,
+      WHERE id = ? AND next_reminder_at = ?
+        AND schedule_type = 'recurring' AND archived_at IS NULL`,
   )
     .bind(
       addDays(event.next_reminder_at, event.interval_days),
@@ -411,7 +523,8 @@ async function finishDeliveredEvent(env, event) {
             completed_at = COALESCE(completed_at, ?),
             failed_at = NULL,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-      WHERE id = ? AND next_reminder_at = ? AND schedule_type = 'one_time'`,
+      WHERE id = ? AND next_reminder_at = ?
+        AND schedule_type = 'one_time' AND archived_at IS NULL`,
   )
     .bind(completedAt, event.id, event.next_reminder_at)
     .run();
@@ -430,7 +543,8 @@ async function finishExhaustedEvent(env, event) {
             failed_at = COALESCE(failed_at, ?),
             completed_at = NULL,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-      WHERE id = ? AND next_reminder_at = ? AND schedule_type = 'one_time'`,
+      WHERE id = ? AND next_reminder_at = ?
+        AND schedule_type = 'one_time' AND archived_at IS NULL`,
   )
     .bind(failedAt, event.id, event.next_reminder_at)
     .run();
