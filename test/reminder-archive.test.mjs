@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
-import worker, { archiveExpiredOneTimeEvents } from "../src/index.js";
+import worker, { archiveExpiredOneTimeEvents, deliverEvent } from "../src/index.js";
 
 const origin = "https://archive-preview.example.test";
 const migrationPaths = [
@@ -10,6 +10,7 @@ const migrationPaths = [
   "../migrations/0002_one_time_reminders.sql",
   "../migrations/0003_reminder_archive.sql",
   "../migrations/0004_preserve_deleted_delivery_history.sql",
+  "../migrations/0005_delivery_schedule_type.sql",
 ];
 
 test("normal deletion soft-archives a reminder and preserves delivery history", async () => {
@@ -186,6 +187,79 @@ test("delivery-history migration retains rows after parent deletion", async () =
   assert.match(migration, /event_id INTEGER,/);
   assert.match(migration, /ON DELETE SET NULL/);
   assert.match(migration, /INSERT INTO deliveries_with_retained_history/);
+});
+
+test("delivery type migration defaults existing historical records to recurring", async () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys = ON");
+  try {
+    for (const path of migrationPaths.slice(0, -1)) {
+      database.exec(await readFile(new URL(path, import.meta.url), "utf8"));
+    }
+    database.exec("DELETE FROM deliveries; DELETE FROM events;");
+    const eventId = insertEvent(database, {
+      name: "Historical one-time event",
+      scheduleType: "one_time",
+    });
+    insertDelivery(database, eventId, "Historical one-time event");
+
+    const migration = await readFile(
+      new URL("../migrations/0005_delivery_schedule_type.sql", import.meta.url),
+      "utf8",
+    );
+    database.exec(migration);
+
+    assert.match(migration, /schedule_type TEXT NOT NULL DEFAULT 'recurring'/);
+    assert.match(migration, /'recurring', 'one_time'/);
+    assert.equal(
+      database.prepare("SELECT schedule_type FROM deliveries WHERE event_id = ?").get(eventId).schedule_type,
+      "recurring",
+    );
+  } finally {
+    database.close();
+  }
+});
+
+test("delivery type is snapshotted, returned by the API, and retained after deletion", async (t) => {
+  const context = await createContext();
+  const eventId = insertEvent(context.database, {
+    name: "One-time snapshot",
+    scheduleType: "one_time",
+    anchorDate: "2099-01-01",
+    nextReminderAt: "2099-01-01T11:50:00.000Z",
+  });
+  const event = context.database.prepare(
+    `SELECT id, name, interval_days, message, next_reminder_at, schedule_type
+       FROM events WHERE id = ?`,
+  ).get(eventId);
+  context.env.DISCORD_WEBHOOK_URL = "https://example.test/test-webhook";
+  t.mock.method(globalThis, "fetch", async () => new Response(null, { status: 204 }));
+
+  await deliverEvent(context.env, { ...event });
+  context.database.prepare(
+    "UPDATE events SET schedule_type = 'recurring' WHERE id = ?",
+  ).run(eventId);
+
+  const historyResponse = await api(context, "/api/deliveries");
+  assert.equal(historyResponse.status, 200);
+  const history = await historyResponse.json();
+  const delivery = history.deliveries.find(({ event_id: id }) => id === eventId);
+  assert.equal(delivery.schedule_type, "one_time");
+
+  context.database.prepare(
+    `UPDATE events
+        SET archived_at = '2099-01-01T12:01:00.000Z', archived_reason = 'manual'
+      WHERE id = ?`,
+  ).run(eventId);
+  const removed = await api(context, `/api/archive/${eventId}`, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  assert.deepEqual({ ...context.database.prepare(
+    "SELECT event_id, event_name, schedule_type FROM deliveries WHERE event_name = ?",
+  ).get("One-time snapshot") }, {
+    event_id: null,
+    event_name: "One-time snapshot",
+    schedule_type: "one_time",
+  });
 });
 
 async function createContext() {

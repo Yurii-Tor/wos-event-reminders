@@ -339,7 +339,7 @@ function serializeEvents(results) {
 async function listDeliveries(env) {
   const { results } = await env.DB.prepare(
     `SELECT id, event_id, event_name, scheduled_for, attempted_at,
-            sent_at, status, attempts, error
+            sent_at, status, attempts, error, schedule_type
        FROM deliveries
       ORDER BY attempted_at DESC
       LIMIT 50`,
@@ -398,10 +398,15 @@ export async function normalizeOverdueEvents(env, nowMs) {
 export async function deliverEvent(env, event) {
   await env.DB.prepare(
     `INSERT OR IGNORE INTO deliveries
-       (event_id, event_name, scheduled_for, status, attempts)
-     VALUES (?, ?, ?, 'pending', 0)`,
+       (event_id, event_name, scheduled_for, status, attempts, schedule_type)
+     VALUES (?, ?, ?, 'pending', 0, ?)`,
   )
-    .bind(event.id, event.name, event.next_reminder_at)
+    .bind(
+      event.id,
+      event.name,
+      event.next_reminder_at,
+      isOneTime(event) ? "one_time" : "recurring",
+    )
     .run();
 
   const delivery = await env.DB.prepare(

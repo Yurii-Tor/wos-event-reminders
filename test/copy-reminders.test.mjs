@@ -20,6 +20,7 @@ const migrationPaths = [
   "../migrations/0002_one_time_reminders.sql",
   "../migrations/0003_reminder_archive.sql",
   "../migrations/0004_preserve_deleted_delivery_history.sql",
+  "../migrations/0005_delivery_schedule_type.sql",
 ];
 
 test("current non-archived reminders render a Copy button wired to copy mode", () => {

@@ -63,3 +63,10 @@ test("frontend and Worker agree on archive, restore, and permanent-delete routes
   assert.match(appSource, /Reminder archived\./);
   assert.match(appSource, /Delete permanently/);
 });
+
+test("history renders the delivery type snapshot as an accessible badge", () => {
+  assert.match(indexSource, /<th>Event<\/th><th>Type<\/th><th>Scheduled<\/th>/);
+  assert.match(appSource, /delivery\.schedule_type === "one_time" \? "One time" : "Recurring"/);
+  assert.match(appSource, /`schedule-badge \$\{delivery\.schedule_type\}`/);
+  assert.match(appSource, /setAttribute\("aria-label", `Reminder type: \$\{typeLabel\}`\)/);
+});

@@ -206,12 +206,21 @@ function renderDeliveries() {
   for (const delivery of state.deliveries) {
     const row = document.createElement("tr");
     const eventCell = element("td", "", delivery.event_name);
+    const typeCell = document.createElement("td");
+    const typeLabel = delivery.schedule_type === "one_time" ? "One time" : "Recurring";
+    const typeBadge = element(
+      "span",
+      `schedule-badge ${delivery.schedule_type}`,
+      typeLabel,
+    );
+    typeBadge.setAttribute("aria-label", `Reminder type: ${typeLabel}`);
+    typeCell.append(typeBadge);
     const scheduledCell = element("td", "", formatUtc(delivery.scheduled_for));
     const statusCell = document.createElement("td");
     statusCell.append(element("span", `badge ${delivery.status}`, delivery.status));
     const attemptedCell = element("td", "", formatUtc(delivery.attempted_at));
     if (delivery.error) attemptedCell.title = delivery.error;
-    row.append(eventCell, scheduledCell, statusCell, attemptedCell);
+    row.append(eventCell, typeCell, scheduledCell, statusCell, attemptedCell);
     body.append(row);
   }
 }
