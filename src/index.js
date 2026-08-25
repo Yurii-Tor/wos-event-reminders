@@ -6,6 +6,14 @@ const MAX_DELIVERY_ATTEMPTS = 3;
 const REMINDERS_API_PATH = "/api/reminders";
 const LEGACY_EVENTS_API_PATH = "/api/events";
 
+class RequestError extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.name = "RequestError";
+    this.status = status;
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -43,22 +51,22 @@ export default {
 
       if (reminderRoute?.id === null && request.method === "GET") {
         await normalizeOverdueEvents(env, Date.now());
-        return listEvents(env);
+        return await listEvents(env);
       }
 
       if (reminderRoute?.id === null && request.method === "POST") {
-        return createEvent(request, env);
+        return await createEvent(request, env);
       }
 
       if (reminderRoute && reminderRoute.id !== null && request.method === "PUT") {
-        return updateEvent(request, env, reminderRoute.id);
+        return await updateEvent(request, env, reminderRoute.id);
       }
       if (reminderRoute && reminderRoute.id !== null && request.method === "DELETE") {
-        return deleteEvent(env, reminderRoute.id);
+        return await deleteEvent(env, reminderRoute.id);
       }
 
       if (url.pathname === "/api/deliveries" && request.method === "GET") {
-        return listDeliveries(env);
+        return await listDeliveries(env);
       }
 
       if (url.pathname === "/api/send-test" && request.method === "POST") {
@@ -71,8 +79,10 @@ export default {
 
       return json({ error: "Not found" }, 404);
     } catch (error) {
-      console.error(error);
-      return json({ error: publicError(error) }, error.status || 500);
+      const isRequestError = error instanceof RequestError;
+      if (!isRequestError) console.error(error);
+      const status = isRequestError ? error.status : 500;
+      return json({ error: publicError(error) }, status);
     }
   },
 
@@ -542,9 +552,7 @@ export function validateEventInput(body, fromMs = Date.now()) {
 }
 
 function validationError(message) {
-  const error = new Error(message);
-  error.status = 400;
-  return error;
+  return new RequestError(message);
 }
 
 function addDays(iso, days) {
@@ -565,7 +573,7 @@ async function readJson(request) {
   try {
     return await request.json();
   } catch {
-    throw new Error("Request body must be valid JSON");
+    throw validationError("Request body must be valid JSON");
   }
 }
 

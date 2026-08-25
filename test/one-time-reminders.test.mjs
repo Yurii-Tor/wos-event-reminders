@@ -7,6 +7,7 @@ import {
   normalizeOverdueEvents,
   validateEventInput,
 } from "../src/index.js";
+import worker from "../src/index.js";
 
 const ONE_TIME_REMINDER = "2026-09-10T14:50:00.000Z";
 
@@ -77,6 +78,39 @@ test("one-time API validation rejects a reminder time in the past", () => {
     ),
     (error) => error.status === 400 && /must be in the future/.test(error.message),
   );
+});
+
+test("authenticated API returns 400 for a past one-time reminder", async () => {
+  const env = {
+    DASHBOARD_PASSWORD: "test-password",
+    SESSION_SECRET: "test-session-secret",
+  };
+  const origin = "https://preview.example.test";
+  const loginResponse = await worker.fetch(new Request(`${origin}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: origin },
+    body: JSON.stringify({ password: env.DASHBOARD_PASSWORD }),
+  }), env);
+  const cookie = loginResponse.headers.get("Set-Cookie").split(";", 1)[0];
+
+  const response = await worker.fetch(new Request(`${origin}/api/reminders`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: cookie,
+      Origin: origin,
+    },
+    body: JSON.stringify(validInput({
+      schedule_type: "one_time",
+      anchor_date: "2000-01-01",
+    })),
+  }), env);
+
+  assert.equal(loginResponse.status, 200);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "One-time reminder time must be in the future",
+  });
 });
 
 test("successful one-time delivery sends once, completes, and never advances", async (t) => {

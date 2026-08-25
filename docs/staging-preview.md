@@ -68,10 +68,17 @@ After pushing a non-production branch:
 
 `wrangler versions upload` creates an HTTP preview but does not promote it to
 an active deployment, so scheduled cron events do not run automatically on the
-preview version. If an end-to-end scheduled-delivery test is required, first
-verify all three staging secrets, then explicitly deploy only the isolated
-environment with `npx wrangler deploy --env staging`. Never run that command
-without the `--env staging` flag.
+preview version. This means HTTP testing and scheduled-delivery testing would
+otherwise run different Worker code. Before an end-to-end scheduled-delivery
+test, verify all three staging secrets and activate the feature code only on the
+isolated staging Worker:
+
+```powershell
+npm run deploy:staging
+```
+
+This command includes both `--env staging` and the explicit staging Worker
+name. Never run the default production deploy command for preview testing.
 
 ## Safety invariant
 
