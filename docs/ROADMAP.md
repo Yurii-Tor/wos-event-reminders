@@ -26,8 +26,8 @@ An already-implemented ticket that is still moving through preview or release ve
 
 - `feature/one-time-reminders` has completed its production migration, merge, production deployment, smoke test, and clean-local-default-branch gates.
 - `feature/reminder-archive` was already implemented before this roadmap update and has completed its production migrations, merge, production deployment, smoke test, and clean-local-default-branch gates. Do not alter or restart that implementation as part of roadmap work.
-- `feature/copy-reminders` was created only after those release gates completed. It is now the current ticket at its manual preview gate. Do not modify its approved preview commit or begin its production release without explicit preview approval.
-- `feature/history-reminder-type-label` is queued after copy-reminders and may begin only after copy-reminders completes every release gate.
+- `feature/copy-reminders` completed manual preview, merge, production deployment, smoke testing, and clean-local-default-branch gates without a D1 migration.
+- `feature/history-reminder-type-label` is the current ticket. Its implementation and staging migration may proceed, but it must stop at manual preview approval before production release.
 
 The requested numbering is retained. Reminder-archive's earlier out-of-order release is recorded as a completed transition and does not change the remaining gate order.
 
@@ -40,12 +40,12 @@ The requested numbering is retained. Reminder-archive's earlier out-of-order rel
 ## Ticket: copy reminders
 
 - **Branch:** `feature/copy-reminders`
-- **Status:** implementation complete and stopped at the manual preview gate. PR #4 remains open and unmerged.
+- **Status:** fully released. PR #4 merged as `f1e071fbbe983720463254453363eac276e4d782`; production deployment `39c4c358-c9c0-47c9-8a96-ffd5efa50009` and smoke tests passed.
 - **Preview commit:** `e684c5ca21909f8e539f853a122c207b7ab865f1`.
 - **Automated verification:** 32 tests passed; syntax and diff checks passed.
-- **D1 migration:** none.
+- **D1 migration:** none required in staging or production.
 - **Cloudflare preview:** successful staging build, version `6c31d9f4-8114-46ff-be87-f32a8ef8d5fb`, at `https://feature-copy-reminders-wos-event-reminders-staging.chute-risk9361.workers.dev`.
-- **Next gate:** explicit manual preview approval. Do not merge or deploy production before approval.
+- **Release gate:** complete; the local default branch was fast-forwarded cleanly before the next ticket began.
 - **Dependency (satisfied):** implementation began only after one-time reminders were merged and verified in production and reminder-archive completed all repository delivery gates.
 - **Compatibility:** correctly support both recurring and one-time reminders.
 
@@ -128,9 +128,41 @@ Tests must cover:
 ## Ticket: history reminder type label
 
 - **Branch:** `feature/history-reminder-type-label`
-- **Status:** queued after copy reminders.
-- **Dependency:** do not begin until copy reminders completes every release gate.
-- **Scope:** define the detailed acceptance criteria before implementation; do not infer or bundle archive behavior into this ticket.
+- **Status:** active after copy reminders completed every release gate; stop at manual preview approval.
+- **Dependency (satisfied):** implementation began from a clean, freshly updated default branch only after copy reminders was verified in production.
+- **D1 migration:** `0005_delivery_schedule_type.sql`; apply to staging for preview and to production only after explicit preview approval.
+
+### Requirements
+
+- Add a `Type` column to Recent deliveries/History.
+- Display `Recurring` or `One time` as accessible badges.
+- Snapshot the reminder type in each historical delivery record at delivery creation time.
+- Do not derive a historical type from the reminder's current state.
+- Default all historical records that predate the snapshot column to `recurring`.
+- Return the stored type through the deliveries API.
+- Preserve delivery history and its type snapshot after reminder archival or permanent deletion.
+- Keep this ticket isolated from additional archive behavior.
+
+### Required regression coverage
+
+- The versioned migration adds a constrained, non-null snapshot column with a `recurring` default.
+- Existing historical records migrate to `recurring` without data loss.
+- Recurring and one-time deliveries store their type at delivery creation.
+- A later reminder-type change does not alter the historical snapshot.
+- The deliveries API returns the stored type.
+- The frontend renders the Type column and accessible labels.
+- Permanent reminder deletion retains both delivery history and the stored type.
+- Existing one-time, copy, and archive behavior remains passing.
+
+### Delivery checklist
+
+1. Run all tests and syntax checks.
+2. Apply only migration `0005_delivery_schedule_type.sql` to isolated staging and verify historical row preservation, defaults, constraints, and archive foreign keys.
+3. Commit and push only `feature/history-reminder-type-label`.
+4. Create a pull request targeting the repository default branch.
+5. Confirm a successful non-production Cloudflare preview and verify its staging bindings.
+6. Provide a manual testing checklist and stop before merging.
+7. Wait for explicit preview approval before applying `0005` to production or merging.
 
 ## Ticket: reminder archive
 

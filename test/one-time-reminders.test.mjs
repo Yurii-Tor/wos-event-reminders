@@ -129,6 +129,7 @@ test("successful one-time delivery sends once, completes, and never advances", a
   assert.equal(sends, 1);
   assert.equal(database.delivery.status, "sent");
   assert.equal(database.delivery.attempts, 1);
+  assert.equal(database.delivery.schedule_type, "one_time");
   assert.equal(database.event.enabled, 0);
   assert.equal(database.event.terminal_status, "completed");
   assert.ok(database.event.completed_at);
@@ -224,6 +225,7 @@ class FakeD1 {
           event_id: args[0],
           event_name: args[1],
           scheduled_for: args[2],
+          schedule_type: args[3],
           status: "pending",
           attempts: 0,
           error: null,
