@@ -102,13 +102,19 @@
           <label class="wide">Event name
             <input id="event-name" maxlength="100" required />
           </label>
-          <label>First event date (UTC)
+          <label class="wide">Schedule type
+            <select id="schedule-type" required>
+              <option value="recurring">Recurring</option>
+              <option value="one_time">One time</option>
+            </select>
+          </label>
+          <label><span id="date-label-text">First event date (UTC)</span>
             <input id="anchor-date" type="date" required />
           </label>
           <label>Start time (UTC)
             <input id="start-time" type="time" required />
           </label>
-          <label>Repeat every (days)
+          <label id="interval-field">Repeat every (days)
             <input id="interval-days" type="number" min="1" max="365" value="2" required />
           </label>
           <label>Remind before (minutes)
@@ -131,6 +137,6 @@
     </dialog>
 
     <div id="toast" class="toast hidden" role="status"></div>
-    <script type="module" src="/app.js?v=b328d480237a"></script>
+    <script type="module" src="/app.js?v=4f5c3c3c9fa1"></script>
   </body>
 </html>

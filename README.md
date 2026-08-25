@@ -4,6 +4,7 @@ A standalone Cloudflare Worker with:
 
 - a shared-password dashboard;
 - D1-backed event creation, editing and deletion;
+- explicit recurring and one-time UTC reminder schedules;
 - one UTC Cron Trigger running every minute;
 - Discord webhook delivery with retry history;
 - Bear Trap 1 and Bear Trap 2 preconfigured every 48 hours from 24 August 2026;
@@ -96,7 +97,7 @@ https://wos-event-reminders.YOUR-SUBDOMAIN.workers.dev
 
 Open it and sign in with the shared password. Use **Send test** to verify the replacement webhook.
 
-Cron Trigger changes can require several minutes to propagate. The Worker automatically advances old seeded dates to the next valid 48-hour occurrence and never intentionally sends an event that is more than five minutes late.
+Cron Trigger changes can require several minutes to propagate. The Worker automatically advances old recurring seed dates to the next valid 48-hour occurrence. One-time reminders retain their exact occurrence and become completed or terminally failed instead of being advanced.
 
 ## Updating the application
 

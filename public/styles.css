@@ -24,7 +24,7 @@ body {
     radial-gradient(circle at 50% -20%, rgba(43, 159, 232, .28), transparent 42%),
     linear-gradient(160deg, #06111b 0%, #071925 48%, #06111b 100%);
 }
-button, input, textarea { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 .hidden { display: none !important; }
 .aurora {
@@ -69,7 +69,7 @@ h2 { margin-bottom: 0; font-size: 1.2rem; }
 .eyebrow { margin-bottom: 7px; color: var(--ice); font-size: .72rem; font-weight: 800; letter-spacing: .16em; }
 .muted { color: var(--muted); line-height: 1.55; }
 label { display: grid; gap: 8px; color: #c4d5de; font-size: .86rem; font-weight: 650; }
-input, textarea {
+input, select, textarea {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 11px;
@@ -78,7 +78,7 @@ input, textarea {
   background: rgba(3, 14, 23, .62);
   outline: none;
 }
-input:focus, textarea:focus { border-color: var(--ice); box-shadow: 0 0 0 3px rgba(142, 232, 255, .1); }
+input:focus, select:focus, textarea:focus { border-color: var(--ice); box-shadow: 0 0 0 3px rgba(142, 232, 255, .1); }
 .login-card label { margin-top: 26px; }
 button {
   border: 0;
@@ -131,6 +131,17 @@ button:disabled { cursor: wait; opacity: .55; }
   background: rgba(2, 15, 24, .46);
 }
 .event-name { display: flex; align-items: center; gap: 10px; font-weight: 800; }
+.schedule-badge {
+  display: inline-flex;
+  padding: 4px 7px;
+  border-radius: 999px;
+  font-size: .64rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.schedule-badge.recurring { color: var(--ice); background: rgba(142, 232, 255, .1); }
+.schedule-badge.one_time { color: var(--orange); background: rgba(255, 175, 82, .1); }
 .status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--success); box-shadow: 0 0 12px rgba(88, 219, 155, .6); }
 .status-dot.off { background: #637986; box-shadow: none; }
 .event-meta { color: var(--muted); font-size: .82rem; line-height: 1.5; }

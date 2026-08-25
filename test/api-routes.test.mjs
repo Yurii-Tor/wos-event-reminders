@@ -41,3 +41,11 @@ test("Worker recognizes canonical reminder routes and legacy event aliases", () 
   assert.equal(matchReminderApiPath("/api/reminders/not-a-number"), null);
   assert.equal(matchReminderApiPath("/api/deliveries"), null);
 });
+
+test("frontend submits both explicit schedule types and hides the recurring interval for one-time reminders", () => {
+  assert.match(indexSource, /<option value="recurring">Recurring<\/option>/);
+  assert.match(indexSource, /<option value="one_time">One time<\/option>/);
+  assert.match(appSource, /schedule_type: \$\("#schedule-type"\)\.value/);
+  assert.match(appSource, /classList\.toggle\("hidden", oneTime\)/);
+  assert.match(appSource, /`schedule-badge \$\{event\.schedule_type\}`/);
+});

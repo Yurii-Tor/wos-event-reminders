@@ -1,6 +1,7 @@
 const SESSION_COOKIE = "wos_session";
 const SESSION_SECONDS = 8 * 60 * 60;
 const DELIVERY_GRACE_MS = 5 * 60 * 1000;
+const DELIVERY_CLAIM_LEASE_MS = 5 * 60 * 1000;
 const MAX_DELIVERY_ATTEMPTS = 3;
 const REMINDERS_API_PATH = "/api/reminders";
 const LEGACY_EVENTS_API_PATH = "/api/events";
@@ -71,7 +72,7 @@ export default {
       return json({ error: "Not found" }, 404);
     } catch (error) {
       console.error(error);
-      return json({ error: publicError(error) }, 500);
+      return json({ error: publicError(error) }, error.status || 500);
     }
   },
 
@@ -137,8 +138,9 @@ async function isAuthenticated(request, env) {
 async function listEvents(env) {
   const { results } = await env.DB.prepare(
     `SELECT id, name, anchor_date, start_time_utc, interval_days,
-            reminder_minutes, message, enabled, next_reminder_at,
-            last_sent_at, created_at, updated_at
+            reminder_minutes, message, enabled, next_reminder_at, schedule_type,
+            terminal_status, completed_at, failed_at, last_sent_at,
+            created_at, updated_at
        FROM events
       ORDER BY enabled DESC, next_reminder_at ASC`,
   ).all();
@@ -154,20 +156,14 @@ async function listEvents(env) {
 }
 
 async function createEvent(request, env) {
-  const input = validateEvent(await readJson(request));
-  const nextReminder = computeNextReminderIso(
-    input.anchor_date,
-    input.start_time_utc,
-    input.reminder_minutes,
-    input.interval_days,
-    Date.now(),
-  );
+  const input = validateEventInput(await readJson(request));
+  const nextReminder = computeReminderForSchedule(input, Date.now());
 
   const result = await env.DB.prepare(
     `INSERT INTO events
        (name, anchor_date, start_time_utc, interval_days, reminder_minutes,
-        message, enabled, next_reminder_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        message, enabled, next_reminder_at, schedule_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      RETURNING id`,
   )
     .bind(
@@ -179,6 +175,7 @@ async function createEvent(request, env) {
       input.message,
       input.enabled ? 1 : 0,
       nextReminder,
+      input.schedule_type,
     )
     .first();
 
@@ -186,20 +183,15 @@ async function createEvent(request, env) {
 }
 
 async function updateEvent(request, env, id) {
-  const input = validateEvent(await readJson(request));
-  const nextReminder = computeNextReminderIso(
-    input.anchor_date,
-    input.start_time_utc,
-    input.reminder_minutes,
-    input.interval_days,
-    Date.now(),
-  );
+  const input = validateEventInput(await readJson(request));
+  const nextReminder = computeReminderForSchedule(input, Date.now());
 
   const result = await env.DB.prepare(
     `UPDATE events
         SET name = ?, anchor_date = ?, start_time_utc = ?, interval_days = ?,
             reminder_minutes = ?, message = ?, enabled = ?,
-            next_reminder_at = ?,
+            next_reminder_at = ?, schedule_type = ?, terminal_status = NULL,
+            completed_at = NULL, failed_at = NULL,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       WHERE id = ?`,
   )
@@ -212,6 +204,7 @@ async function updateEvent(request, env, id) {
       input.message,
       input.enabled ? 1 : 0,
       nextReminder,
+      input.schedule_type,
       id,
     )
     .run();
@@ -244,7 +237,7 @@ async function processDueEvents(env, nowMs) {
   await normalizeOverdueEvents(env, nowMs);
   const nowIso = new Date(nowMs).toISOString();
   const { results } = await env.DB.prepare(
-    `SELECT id, name, interval_days, message, next_reminder_at
+    `SELECT id, name, interval_days, message, next_reminder_at, schedule_type
        FROM events
       WHERE enabled = 1 AND next_reminder_at <= ?
       ORDER BY next_reminder_at ASC
@@ -258,17 +251,20 @@ async function processDueEvents(env, nowMs) {
   }
 }
 
-async function normalizeOverdueEvents(env, nowMs) {
+export async function normalizeOverdueEvents(env, nowMs) {
   const staleBefore = new Date(nowMs - DELIVERY_GRACE_MS).toISOString();
   const { results } = await env.DB.prepare(
-    `SELECT id, interval_days, next_reminder_at
+    `SELECT id, interval_days, next_reminder_at, schedule_type
        FROM events
-      WHERE enabled = 1 AND next_reminder_at < ?`,
+      WHERE enabled = 1
+        AND schedule_type = 'recurring'
+        AND next_reminder_at < ?`,
   )
     .bind(staleBefore)
     .all();
 
   for (const event of results) {
+    if (event.schedule_type !== "recurring") continue;
     const nextMs = Date.parse(event.next_reminder_at);
     const intervalMs = event.interval_days * 86_400_000;
     const periods = Math.floor((nowMs - nextMs) / intervalMs) + 1;
@@ -284,7 +280,7 @@ async function normalizeOverdueEvents(env, nowMs) {
   }
 }
 
-async function deliverEvent(env, event) {
+export async function deliverEvent(env, event) {
   await env.DB.prepare(
     `INSERT OR IGNORE INTO deliveries
        (event_id, event_name, scheduled_for, status, attempts)
@@ -301,62 +297,88 @@ async function deliverEvent(env, event) {
     .bind(event.id, event.next_reminder_at)
     .first();
 
-  if (!delivery || delivery.status === "sent") {
-    await advanceEvent(env, event);
+  if (!delivery) throw new Error("Could not create delivery record");
+  if (delivery.status === "sent") {
+    await finishDeliveredEvent(env, event);
     return;
   }
   if (delivery.attempts >= MAX_DELIVERY_ATTEMPTS) {
-    await advanceEvent(env, event);
+    await finishExhaustedEvent(env, event);
     return;
   }
+
+  const attemptedAt = new Date().toISOString();
+  const staleClaimBefore = new Date(Date.now() - DELIVERY_CLAIM_LEASE_MS).toISOString();
+  const claim = await env.DB.prepare(
+    `UPDATE deliveries
+        SET status = 'pending', attempted_at = ?, attempts = attempts + 1,
+            error = NULL
+      WHERE id = ? AND attempts = ?
+        AND (
+          (status = 'pending' AND (attempts = 0 OR attempted_at < ?))
+          OR status = 'failed'
+        )`,
+  )
+    .bind(attemptedAt, delivery.id, delivery.attempts, staleClaimBefore)
+    .run();
+
+  if (!claim.meta.changes) return;
+  const attempts = delivery.attempts + 1;
 
   try {
     await sendDiscordMessage(env, event.message);
     const sentAt = new Date().toISOString();
+    const eventUpdate = isOneTime(event)
+      ? env.DB.prepare(
+          `UPDATE events
+              SET last_sent_at = ?, enabled = 0, terminal_status = 'completed',
+                  completed_at = ?, failed_at = NULL,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ? AND next_reminder_at = ? AND schedule_type = 'one_time'`,
+        ).bind(sentAt, sentAt, event.id, event.next_reminder_at)
+      : env.DB.prepare(
+          `UPDATE events
+              SET last_sent_at = ?, next_reminder_at = ?,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ? AND next_reminder_at = ? AND schedule_type = 'recurring'`,
+        ).bind(
+          sentAt,
+          addDays(event.next_reminder_at, event.interval_days),
+          event.id,
+          event.next_reminder_at,
+        );
+
     await env.DB.batch([
       env.DB.prepare(
         `UPDATE deliveries
-            SET status = 'sent', sent_at = ?, attempted_at = ?,
-                attempts = attempts + 1, error = NULL
-          WHERE id = ?`,
-      ).bind(sentAt, sentAt, delivery.id),
-      env.DB.prepare(
-        `UPDATE events
-            SET last_sent_at = ?,
-                next_reminder_at = ?,
-                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-          WHERE id = ? AND next_reminder_at = ?`,
-      ).bind(
-        sentAt,
-        addDays(event.next_reminder_at, event.interval_days),
-        event.id,
-        event.next_reminder_at,
-      ),
+            SET status = 'sent', sent_at = ?, attempted_at = ?, error = NULL
+          WHERE id = ? AND status = 'pending' AND attempts = ?`,
+      ).bind(sentAt, attemptedAt, delivery.id, attempts),
+      eventUpdate,
     ]);
   } catch (error) {
-    const attemptedAt = new Date().toISOString();
-    const attempts = delivery.attempts + 1;
     await env.DB.prepare(
       `UPDATE deliveries
-          SET status = 'failed', attempted_at = ?, attempts = ?, error = ?
-        WHERE id = ?`,
+          SET status = 'failed', attempted_at = ?, error = ?
+        WHERE id = ? AND status = 'pending' AND attempts = ?`,
     )
-      .bind(attemptedAt, attempts, publicError(error).slice(0, 500), delivery.id)
+      .bind(attemptedAt, publicError(error).slice(0, 500), delivery.id, attempts)
       .run();
 
     if (attempts >= MAX_DELIVERY_ATTEMPTS) {
-      await advanceEvent(env, event);
+      await finishExhaustedEvent(env, event);
     }
     throw error;
   }
 }
 
 async function advanceEvent(env, event) {
+  if (isOneTime(event)) return;
   await env.DB.prepare(
     `UPDATE events
         SET next_reminder_at = ?,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-      WHERE id = ? AND next_reminder_at = ?`,
+      WHERE id = ? AND next_reminder_at = ? AND schedule_type = 'recurring'`,
   )
     .bind(
       addDays(event.next_reminder_at, event.interval_days),
@@ -364,6 +386,48 @@ async function advanceEvent(env, event) {
       event.next_reminder_at,
     )
     .run();
+}
+
+async function finishDeliveredEvent(env, event) {
+  if (!isOneTime(event)) {
+    await advanceEvent(env, event);
+    return;
+  }
+
+  const completedAt = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE events
+        SET enabled = 0, terminal_status = 'completed',
+            completed_at = COALESCE(completed_at, ?),
+            failed_at = NULL,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = ? AND next_reminder_at = ? AND schedule_type = 'one_time'`,
+  )
+    .bind(completedAt, event.id, event.next_reminder_at)
+    .run();
+}
+
+async function finishExhaustedEvent(env, event) {
+  if (!isOneTime(event)) {
+    await advanceEvent(env, event);
+    return;
+  }
+
+  const failedAt = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE events
+        SET enabled = 0, terminal_status = 'failed',
+            failed_at = COALESCE(failed_at, ?),
+            completed_at = NULL,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = ? AND next_reminder_at = ? AND schedule_type = 'one_time'`,
+  )
+    .bind(failedAt, event.id, event.next_reminder_at)
+    .run();
+}
+
+function isOneTime(event) {
+  return event.schedule_type === "one_time";
 }
 
 async function sendDiscordMessage(env, content) {
@@ -402,34 +466,85 @@ export function computeNextReminderIso(
   return new Date(firstReminderMs + periods * intervalMs).toISOString();
 }
 
-function validateEvent(body) {
+export function computeOneTimeReminderIso(
+  eventDate,
+  startTimeUtc,
+  reminderMinutes,
+  fromMs,
+) {
+  const eventMs = Date.parse(`${eventDate}T${startTimeUtc}:00.000Z`);
+  if (!Number.isFinite(eventMs)) throw validationError("Invalid event date or time");
+  const reminderMs = eventMs - reminderMinutes * 60_000;
+  if (reminderMs < fromMs) {
+    throw validationError("One-time reminder time must be in the future");
+  }
+  return new Date(reminderMs).toISOString();
+}
+
+export function computeReminderForSchedule(input, fromMs) {
+  if (input.schedule_type === "one_time") {
+    return computeOneTimeReminderIso(
+      input.anchor_date,
+      input.start_time_utc,
+      input.reminder_minutes,
+      fromMs,
+    );
+  }
+
+  return computeNextReminderIso(
+    input.anchor_date,
+    input.start_time_utc,
+    input.reminder_minutes,
+    input.interval_days,
+    fromMs,
+  );
+}
+
+export function validateEventInput(body, fromMs = Date.now()) {
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const anchorDate = typeof body.anchor_date === "string" ? body.anchor_date : "";
   const startTime = typeof body.start_time_utc === "string" ? body.start_time_utc : "";
   const message = typeof body.message === "string" ? body.message.trim() : "";
+  const scheduleType = body.schedule_type ?? "recurring";
   const intervalDays = Number(body.interval_days);
   const reminderMinutes = Number(body.reminder_minutes);
 
-  if (!name || name.length > 100) throw new Error("Name must be 1–100 characters");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(anchorDate)) throw new Error("Invalid anchor date");
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime)) throw new Error("Invalid UTC time");
-  if (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > 365) {
-    throw new Error("Interval must be between 1 and 365 days");
+  if (!name || name.length > 100) throw validationError("Name must be 1–100 characters");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(anchorDate)) throw validationError("Invalid event date");
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime)) throw validationError("Invalid UTC time");
+  if (!['recurring', 'one_time'].includes(scheduleType)) {
+    throw validationError("Schedule type must be recurring or one_time");
+  }
+  if (
+    scheduleType === "recurring"
+    && (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > 365)
+  ) {
+    throw validationError("Interval must be between 1 and 365 days");
   }
   if (!Number.isInteger(reminderMinutes) || reminderMinutes < 0 || reminderMinutes > 10080) {
-    throw new Error("Reminder must be between 0 and 10,080 minutes");
+    throw validationError("Reminder must be between 0 and 10,080 minutes");
   }
-  if (!message || message.length > 2000) throw new Error("Message must be 1–2,000 characters");
+  if (!message || message.length > 2000) throw validationError("Message must be 1–2,000 characters");
 
-  return {
+  const validated = {
     name,
     anchor_date: anchorDate,
     start_time_utc: startTime,
-    interval_days: intervalDays,
+    schedule_type: scheduleType,
+    interval_days: scheduleType === "recurring" ? intervalDays : 1,
     reminder_minutes: reminderMinutes,
     message,
     enabled: body.enabled !== false,
   };
+
+  computeReminderForSchedule(validated, fromMs);
+  return validated;
+}
+
+function validationError(message) {
+  const error = new Error(message);
+  error.status = 400;
+  return error;
 }
 
 function addDays(iso, days) {

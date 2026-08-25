@@ -13,6 +13,7 @@ $("#test-button").addEventListener("click", onSendTest);
 $("#refresh-button").addEventListener("click", loadDashboard);
 $("#add-button").addEventListener("click", () => openEventDialog());
 $("#event-form").addEventListener("submit", saveEvent);
+$("#schedule-type").addEventListener("change", updateScheduleTypeControls);
 $("#close-dialog").addEventListener("click", () => dialog.close());
 $("#cancel-dialog").addEventListener("click", () => dialog.close());
 
@@ -102,12 +103,26 @@ function renderEvents() {
     const name = element("div", "event-name");
     name.append(element("span", `status-dot${event.enabled ? "" : " off"}`));
     name.append(document.createTextNode(event.name));
+    name.append(element(
+      "span",
+      `schedule-badge ${event.schedule_type}`,
+      event.schedule_type === "one_time" ? "One time" : "Recurring",
+    ));
     identity.append(name);
-    identity.append(element("div", "event-meta", event.enabled ? `Every ${event.interval_days} days` : "Disabled"));
+    const scheduleSummary = event.schedule_type === "one_time"
+      ? oneTimeStatus(event)
+      : event.enabled ? `Every ${event.interval_days} days` : "Disabled";
+    identity.append(element("div", "event-meta", scheduleSummary));
 
     const time = element("div", "event-time");
     time.append(element("strong", "", formatUtc(event.next_start_at)));
-    time.append(element("div", "event-meta", `Reminder ${event.reminder_minutes} min before`));
+    time.append(element(
+      "div",
+      "event-meta",
+      event.schedule_type === "one_time"
+        ? `Exact UTC occurrence · reminder ${event.reminder_minutes} min before`
+        : `Reminder ${event.reminder_minutes} min before`,
+    ));
 
     const message = element("div", "event-meta", event.message);
     const actions = element("div", "event-actions");
@@ -156,6 +171,7 @@ function openEventDialog(event = null) {
   $("#dialog-title").textContent = event ? "Edit event" : "Add event";
   $("#event-id").value = event?.id ?? "";
   $("#event-name").value = event?.name ?? "";
+  $("#schedule-type").value = event?.schedule_type ?? "recurring";
   $("#anchor-date").value = event?.anchor_date ?? new Date().toISOString().slice(0, 10);
   $("#start-time").value = event?.start_time_utc ?? "15:00";
   $("#interval-days").value = event?.interval_days ?? 2;
@@ -163,6 +179,7 @@ function openEventDialog(event = null) {
   $("#event-message").value = event?.message ?? "";
   $("#event-enabled").checked = event?.enabled ?? true;
   $("#form-error").textContent = "";
+  updateScheduleTypeControls();
   dialog.showModal();
   $("#event-name").focus();
 }
@@ -173,6 +190,7 @@ async function saveEvent(event) {
   const id = $("#event-id").value;
   const payload = {
     name: $("#event-name").value,
+    schedule_type: $("#schedule-type").value,
     anchor_date: $("#anchor-date").value,
     start_time_utc: $("#start-time").value,
     interval_days: Number($("#interval-days").value),
@@ -196,6 +214,22 @@ async function saveEvent(event) {
   } finally {
     button.disabled = false;
   }
+}
+
+function updateScheduleTypeControls() {
+  const oneTime = $("#schedule-type").value === "one_time";
+  $("#interval-field").classList.toggle("hidden", oneTime);
+  $("#interval-days").disabled = oneTime;
+  $("#interval-days").required = !oneTime;
+  $("#date-label-text").textContent = oneTime
+    ? "Event date (UTC)"
+    : "First event date (UTC)";
+}
+
+function oneTimeStatus(event) {
+  if (event.terminal_status === "completed") return "Completed";
+  if (event.terminal_status === "failed") return "Failed after maximum retries";
+  return event.enabled ? "Scheduled once" : "Disabled";
 }
 
 async function removeEvent(event) {
