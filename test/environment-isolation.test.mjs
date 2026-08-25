@@ -27,6 +27,7 @@ test("staging Worker uses a separate D1 database", () => {
 test("remote staging commands select the staging environment explicitly", () => {
   const previewCommand = packageJson.scripts["preview:staging"];
   const migrationCommand = packageJson.scripts["db:staging:migrate"];
+  const deployCommand = packageJson.scripts["deploy:staging"];
 
   assert.match(previewCommand, /^wrangler versions upload /);
   assert.match(previewCommand, /--env staging/);
@@ -35,4 +36,7 @@ test("remote staging commands select the staging environment explicitly", () => 
   assert.match(migrationCommand, /--remote/);
   assert.match(migrationCommand, /--env staging$/);
   assert.doesNotMatch(migrationCommand, /wos-event-reminders-db(?:\s|$)/);
+  assert.match(deployCommand, /^wrangler deploy /);
+  assert.match(deployCommand, /--env staging/);
+  assert.match(deployCommand, /--name wos-event-reminders-staging$/);
 });
