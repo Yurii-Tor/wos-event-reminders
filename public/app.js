@@ -1,0 +1,256 @@
+const $ = (selector) => document.querySelector(selector);
+const state = { events: [], deliveries: [] };
+
+const loginView = $("#login-view");
+const appView = $("#app-view");
+const dialog = $("#event-dialog");
+
+document.addEventListener("DOMContentLoaded", initialize);
+$("#login-form").addEventListener("submit", onLogin);
+$("#logout-button").addEventListener("click", onLogout);
+$("#test-button").addEventListener("click", onSendTest);
+$("#refresh-button").addEventListener("click", loadDashboard);
+$("#add-button").addEventListener("click", () => openEventDialog());
+$("#event-form").addEventListener("submit", saveEvent);
+$("#close-dialog").addEventListener("click", () => dialog.close());
+$("#cancel-dialog").addEventListener("click", () => dialog.close());
+
+async function initialize() {
+  try {
+    await api("/api/session");
+    showDashboard();
+    await loadDashboard();
+  } catch {
+    showLogin();
+  }
+}
+
+async function onLogin(event) {
+  event.preventDefault();
+  const button = event.submitter;
+  const error = $("#login-error");
+  error.textContent = "";
+  button.disabled = true;
+  try {
+    await api("/api/login", {
+      method: "POST",
+      body: { password: $("#password").value },
+    });
+    $("#password").value = "";
+    showDashboard();
+    await loadDashboard();
+  } catch (failure) {
+    error.textContent = failure.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function onLogout() {
+  await api("/api/logout", { method: "POST" }).catch(() => {});
+  showLogin();
+}
+
+async function onSendTest() {
+  const button = $("#test-button");
+  button.disabled = true;
+  try {
+    await api("/api/send-test", { method: "POST" });
+    toast("Test message sent to Discord.");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function loadDashboard() {
+  try {
+    const [eventsResult, deliveriesResult] = await Promise.all([
+      api("/api/events"),
+      api("/api/deliveries"),
+    ]);
+    state.events = eventsResult.events;
+    state.deliveries = deliveriesResult.deliveries;
+    renderEvents();
+    renderDeliveries();
+    renderSummary();
+  } catch (error) {
+    if (error.status === 401) showLogin();
+    else toast(error.message);
+  }
+}
+
+function renderEvents() {
+  const list = $("#events-list");
+  list.replaceChildren();
+  $("#events-empty").classList.toggle("hidden", state.events.length > 0);
+
+  for (const event of state.events) {
+    const card = element("article", "event-card");
+    const identity = element("div");
+    const name = element("div", "event-name");
+    name.append(element("span", `status-dot${event.enabled ? "" : " off"}`));
+    name.append(document.createTextNode(event.name));
+    identity.append(name);
+    identity.append(element("div", "event-meta", event.enabled ? `Every ${event.interval_days} days` : "Disabled"));
+
+    const time = element("div", "event-time");
+    time.append(element("strong", "", formatUtc(event.next_start_at)));
+    time.append(element("div", "event-meta", `Reminder ${event.reminder_minutes} min before`));
+
+    const message = element("div", "event-meta", event.message);
+    const actions = element("div", "event-actions");
+    const edit = element("button", "ghost", "Edit");
+    edit.type = "button";
+    edit.addEventListener("click", () => openEventDialog(event));
+    const remove = element("button", "danger", "Delete");
+    remove.type = "button";
+    remove.addEventListener("click", () => removeEvent(event));
+    actions.append(edit, remove);
+    card.append(identity, time, message, actions);
+    list.append(card);
+  }
+}
+
+function renderDeliveries() {
+  const body = $("#deliveries-body");
+  body.replaceChildren();
+  $("#deliveries-empty").classList.toggle("hidden", state.deliveries.length > 0);
+  $(".table-wrap").classList.toggle("hidden", state.deliveries.length === 0);
+
+  for (const delivery of state.deliveries) {
+    const row = document.createElement("tr");
+    const eventCell = element("td", "", delivery.event_name);
+    const scheduledCell = element("td", "", formatUtc(delivery.scheduled_for));
+    const statusCell = document.createElement("td");
+    statusCell.append(element("span", `badge ${delivery.status}`, delivery.status));
+    const attemptedCell = element("td", "", formatUtc(delivery.attempted_at));
+    if (delivery.error) attemptedCell.title = delivery.error;
+    row.append(eventCell, scheduledCell, statusCell, attemptedCell);
+    body.append(row);
+  }
+}
+
+function renderSummary() {
+  const active = state.events.filter((event) => event.enabled);
+  $("#active-count").textContent = String(active.length);
+  $("#next-reminder").textContent = active.length
+    ? formatUtc(active.sort((a, b) => Date.parse(a.next_reminder_at) - Date.parse(b.next_reminder_at))[0].next_reminder_at)
+    : "None scheduled";
+  const sent = state.deliveries.find((delivery) => delivery.status === "sent");
+  $("#last-delivery").textContent = sent ? `${sent.event_name} · ${formatUtc(sent.sent_at)}` : "No deliveries yet";
+}
+
+function openEventDialog(event = null) {
+  $("#dialog-title").textContent = event ? "Edit event" : "Add event";
+  $("#event-id").value = event?.id ?? "";
+  $("#event-name").value = event?.name ?? "";
+  $("#anchor-date").value = event?.anchor_date ?? new Date().toISOString().slice(0, 10);
+  $("#start-time").value = event?.start_time_utc ?? "15:00";
+  $("#interval-days").value = event?.interval_days ?? 2;
+  $("#reminder-minutes").value = event?.reminder_minutes ?? 10;
+  $("#event-message").value = event?.message ?? "";
+  $("#event-enabled").checked = event?.enabled ?? true;
+  $("#form-error").textContent = "";
+  dialog.showModal();
+  $("#event-name").focus();
+}
+
+async function saveEvent(event) {
+  event.preventDefault();
+  const button = event.submitter;
+  const id = $("#event-id").value;
+  const payload = {
+    name: $("#event-name").value,
+    anchor_date: $("#anchor-date").value,
+    start_time_utc: $("#start-time").value,
+    interval_days: Number($("#interval-days").value),
+    reminder_minutes: Number($("#reminder-minutes").value),
+    message: $("#event-message").value,
+    enabled: $("#event-enabled").checked,
+  };
+
+  button.disabled = true;
+  $("#form-error").textContent = "";
+  try {
+    await api(id ? `/api/events/${id}` : "/api/events", {
+      method: id ? "PUT" : "POST",
+      body: payload,
+    });
+    dialog.close();
+    toast(id ? "Event updated." : "Event added.");
+    await loadDashboard();
+  } catch (error) {
+    $("#form-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function removeEvent(event) {
+  if (!confirm(`Delete “${event.name}” and its delivery history?`)) return;
+  try {
+    await api(`/api/events/${event.id}`, { method: "DELETE" });
+    toast("Event deleted.");
+    await loadDashboard();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    method: options.method || "GET",
+    credentials: "same-origin",
+    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || `Request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+function showDashboard() {
+  loginView.classList.add("hidden");
+  appView.classList.remove("hidden");
+}
+
+function showLogin() {
+  appView.classList.add("hidden");
+  loginView.classList.remove("hidden");
+  $("#password").focus();
+}
+
+function formatUtc(value) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(value)) + " UTC";
+}
+
+function element(tag, className = "", text = "") {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text) node.textContent = text;
+  return node;
+}
+
+let toastTimer;
+function toast(message) {
+  const node = $("#toast");
+  node.textContent = message;
+  node.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => node.classList.add("hidden"), 3500);
+}

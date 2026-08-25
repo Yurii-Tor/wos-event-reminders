@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#071522" />
+    <meta name="description" content="Manage Discord event reminders for State 3607." />
+    <title>State 3607 Event Reminders</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="aurora aurora-one"></div>
+    <div class="aurora aurora-two"></div>
+
+    <section id="login-view" class="login-shell" aria-labelledby="login-title">
+      <form id="login-form" class="login-card">
+        <div class="crest">3607</div>
+        <p class="eyebrow">WHITEOUT SURVIVAL</p>
+        <h1 id="login-title">Event Reminders</h1>
+        <p class="muted">Enter the shared password to manage the schedule.</p>
+        <label for="password">Shared password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+        <button class="primary full" type="submit">Open dashboard</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <div id="app-view" class="app-shell hidden">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">STATE 3607 · UTC</p>
+          <h1>Event Reminders</h1>
+        </div>
+        <div class="top-actions">
+          <button id="test-button" class="secondary" type="button">Send test</button>
+          <button id="logout-button" class="ghost" type="button">Log out</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="summary-grid" aria-label="Schedule summary">
+          <article class="summary-card">
+            <span>Active events</span>
+            <strong id="active-count">—</strong>
+          </article>
+          <article class="summary-card">
+            <span>Next reminder</span>
+            <strong id="next-reminder">—</strong>
+          </article>
+          <article class="summary-card">
+            <span>Last delivery</span>
+            <strong id="last-delivery">—</strong>
+          </article>
+        </section>
+
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">SCHEDULE</p>
+              <h2>Upcoming events</h2>
+            </div>
+            <button id="add-button" class="primary" type="button">+ Add event</button>
+          </div>
+          <div id="events-empty" class="empty hidden">No events yet. Add the first reminder.</div>
+          <div id="events-list" class="event-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">HISTORY</p>
+              <h2>Recent deliveries</h2>
+            </div>
+            <button id="refresh-button" class="ghost" type="button">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Event</th><th>Scheduled</th><th>Status</th><th>Attempted</th></tr>
+              </thead>
+              <tbody id="deliveries-body"></tbody>
+            </table>
+          </div>
+          <div id="deliveries-empty" class="empty hidden">No delivery attempts yet.</div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="event-dialog">
+      <form id="event-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">REMINDER</p>
+            <h2 id="dialog-title">Add event</h2>
+          </div>
+          <button id="close-dialog" class="icon-button" type="button" aria-label="Close">×</button>
+        </div>
+        <input id="event-id" type="hidden" />
+        <div class="form-grid">
+          <label class="wide">Event name
+            <input id="event-name" maxlength="100" required />
+          </label>
+          <label>First event date (UTC)
+            <input id="anchor-date" type="date" required />
+          </label>
+          <label>Start time (UTC)
+            <input id="start-time" type="time" required />
+          </label>
+          <label>Repeat every (days)
+            <input id="interval-days" type="number" min="1" max="365" value="2" required />
+          </label>
+          <label>Remind before (minutes)
+            <input id="reminder-minutes" type="number" min="0" max="10080" value="10" required />
+          </label>
+          <label class="wide">Discord message
+            <textarea id="event-message" maxlength="2000" rows="3" required></textarea>
+          </label>
+          <label class="toggle wide">
+            <input id="event-enabled" type="checkbox" checked />
+            <span>Reminder enabled</span>
+          </label>
+        </div>
+        <p id="form-error" class="error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="cancel-dialog" class="ghost" type="button">Cancel</button>
+          <button class="primary" type="submit">Save event</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast hidden" role="status"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

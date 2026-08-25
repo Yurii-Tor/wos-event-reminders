@@ -1,0 +1,16 @@
+{
+  "name": "wos-event-reminders",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 migrations apply wos-event-reminders-db --local",
+    "db:remote": "wrangler d1 migrations apply wos-event-reminders-db --remote",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "wrangler": "^4.122.0"
+  }
+}
