@@ -119,6 +119,10 @@ button:disabled { cursor: wait; opacity: .55; }
 .summary-card:first-child strong { color: var(--ice); font-size: 2rem; }
 .panel { margin-top: 16px; padding: 22px; border-radius: var(--radius); }
 .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 18px; }
+.section-actions { display: flex; gap: 9px; }
+.archive-intro, .form-guidance { color: var(--muted); font-size: .86rem; line-height: 1.55; }
+.archive-intro { margin: -4px 0 18px; }
+.form-guidance { margin: 16px 0 0; padding: 11px 13px; border-radius: 11px; background: rgba(255, 175, 82, .08); }
 .event-list { display: grid; gap: 10px; }
 .event-card {
   display: grid;
@@ -131,6 +135,7 @@ button:disabled { cursor: wait; opacity: .55; }
   background: rgba(2, 15, 24, .46);
 }
 .event-name { display: flex; align-items: center; gap: 10px; font-weight: 800; }
+.event-card.archived { background: rgba(2, 15, 24, .3); }
 .schedule-badge {
   display: inline-flex;
   padding: 4px 7px;
@@ -187,6 +192,7 @@ dialog::backdrop { background: rgba(0, 7, 13, .78); backdrop-filter: blur(7px); 
 @media (max-width: 560px) {
   .app-shell { width: min(100% - 20px, 1180px); padding-top: 18px; }
   .topbar, .section-heading { align-items: stretch; flex-direction: column; }
+  .section-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .top-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .event-card, .form-grid { grid-template-columns: 1fr; }
   .wide { grid-column: auto; }

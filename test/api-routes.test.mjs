@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { matchReminderApiPath } from "../src/index.js";
+import { matchArchiveApiPath, matchReminderApiPath } from "../src/index.js";
 
 const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const indexSource = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
@@ -48,4 +48,18 @@ test("frontend submits both explicit schedule types and hides the recurring inte
   assert.match(appSource, /schedule_type: \$\("#schedule-type"\)\.value/);
   assert.match(appSource, /classList\.toggle\("hidden", oneTime\)/);
   assert.match(appSource, /`schedule-badge \$\{event\.schedule_type\}`/);
+});
+
+test("frontend and Worker agree on archive, restore, and permanent-delete routes", () => {
+  const archivePath = appSource.match(
+    /const ARCHIVE_API_PATH = "([^"]+)";/,
+  )?.[1];
+  assert.equal(archivePath, "/api/archive");
+  assert.deepEqual(matchArchiveApiPath(archivePath), { id: null });
+  assert.deepEqual(matchArchiveApiPath(`${archivePath}/42`), { id: 42 });
+  assert.equal(matchArchiveApiPath(`${archivePath}/invalid`), null);
+  assert.match(appSource, /`\$\{ARCHIVE_API_PATH\}\/\$\{id\}`/);
+  assert.match(appSource, /`\$\{ARCHIVE_API_PATH\}\/\$\{event\.id\}`/);
+  assert.match(appSource, /Reminder archived\./);
+  assert.match(appSource, /Delete permanently/);
 });

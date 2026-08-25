@@ -1,6 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { events: [], deliveries: [] };
+const state = { events: [], archivedEvents: [], deliveries: [] };
 const REMINDERS_API_PATH = "/api/reminders";
+const ARCHIVE_API_PATH = "/api/archive";
 
 const loginView = $("#login-view");
 const appView = $("#app-view");
@@ -12,6 +13,8 @@ $("#logout-button").addEventListener("click", onLogout);
 $("#test-button").addEventListener("click", onSendTest);
 $("#refresh-button").addEventListener("click", loadDashboard);
 $("#add-button").addEventListener("click", () => openEventDialog());
+$("#archive-view-button").addEventListener("click", showArchive);
+$("#schedule-view-button").addEventListener("click", showSchedule);
 $("#event-form").addEventListener("submit", saveEvent);
 $("#schedule-type").addEventListener("change", updateScheduleTypeControls);
 $("#close-dialog").addEventListener("click", () => dialog.close());
@@ -72,13 +75,16 @@ async function loadDashboard() {
   dashboardError.classList.add("hidden");
 
   try {
-    const [eventsResult, deliveriesResult] = await Promise.all([
+    const [eventsResult, archiveResult, deliveriesResult] = await Promise.all([
       api(REMINDERS_API_PATH),
+      api(ARCHIVE_API_PATH),
       api("/api/deliveries"),
     ]);
     state.events = eventsResult.events;
+    state.archivedEvents = archiveResult.events;
     state.deliveries = deliveriesResult.deliveries;
     renderEvents();
+    renderArchive();
     renderDeliveries();
     renderSummary();
   } catch (error) {
@@ -129,10 +135,58 @@ function renderEvents() {
     const edit = element("button", "ghost", "Edit");
     edit.type = "button";
     edit.addEventListener("click", () => openEventDialog(event));
-    const remove = element("button", "danger", "Delete");
+    const archive = element("button", "danger", "Archive");
+    archive.type = "button";
+    archive.addEventListener("click", () => archiveEvent(event));
+    actions.append(edit, archive);
+    card.append(identity, time, message, actions);
+    list.append(card);
+  }
+}
+
+function renderArchive() {
+  const list = $("#archive-list");
+  list.replaceChildren();
+  $("#archive-empty").classList.toggle("hidden", state.archivedEvents.length > 0);
+  $("#archive-view-button").textContent = `Archive (${state.archivedEvents.length})`;
+
+  for (const event of state.archivedEvents) {
+    const card = element("article", "event-card archived");
+    const identity = element("div");
+    const name = element("div", "event-name");
+    name.append(element("span", "status-dot off"));
+    name.append(document.createTextNode(event.name));
+    name.append(element(
+      "span",
+      `schedule-badge ${event.schedule_type}`,
+      event.schedule_type === "one_time" ? "One time" : "Recurring",
+    ));
+    identity.append(name);
+    identity.append(element(
+      "div",
+      "event-meta",
+      `${event.archived_reason === "expired" ? "Expired" : "Archived"} · ${formatUtc(event.archived_at)}`,
+    ));
+
+    const time = element("div", "event-time");
+    time.append(element("strong", "", formatUtc(event.next_start_at)));
+    time.append(element(
+      "div",
+      "event-meta",
+      event.schedule_type === "one_time"
+        ? "Exact archived occurrence"
+        : `Every ${event.interval_days} days`,
+    ));
+
+    const message = element("div", "event-meta", event.message);
+    const actions = element("div", "event-actions");
+    const restore = element("button", "ghost", "Restore");
+    restore.type = "button";
+    restore.addEventListener("click", () => openEventDialog(event, "restore"));
+    const remove = element("button", "danger", "Delete permanently");
     remove.type = "button";
-    remove.addEventListener("click", () => removeEvent(event));
-    actions.append(edit, remove);
+    remove.addEventListener("click", () => permanentlyDeleteEvent(event));
+    actions.append(restore, remove);
     card.append(identity, time, message, actions);
     list.append(card);
   }
@@ -167,9 +221,13 @@ function renderSummary() {
   $("#last-delivery").textContent = sent ? `${sent.event_name} · ${formatUtc(sent.sent_at)}` : "No deliveries yet";
 }
 
-function openEventDialog(event = null) {
-  $("#dialog-title").textContent = event ? "Edit event" : "Add event";
+function openEventDialog(event = null, action = "save") {
+  const restoring = action === "restore";
+  $("#dialog-title").textContent = restoring
+    ? "Restore reminder"
+    : event ? "Edit event" : "Add event";
   $("#event-id").value = event?.id ?? "";
+  $("#event-action").value = action;
   $("#event-name").value = event?.name ?? "";
   $("#schedule-type").value = event?.schedule_type ?? "recurring";
   $("#anchor-date").value = event?.anchor_date ?? new Date().toISOString().slice(0, 10);
@@ -177,7 +235,17 @@ function openEventDialog(event = null) {
   $("#interval-days").value = event?.interval_days ?? 2;
   $("#reminder-minutes").value = event?.reminder_minutes ?? 10;
   $("#event-message").value = event?.message ?? "";
-  $("#event-enabled").checked = event?.enabled ?? true;
+  $("#event-enabled").checked = restoring ? true : event?.enabled ?? true;
+  $("#save-event-button").textContent = restoring ? "Restore reminder" : "Save event";
+  const occurrenceExpired = event?.schedule_type === "one_time"
+    && Date.parse(`${event.anchor_date}T${event.start_time_utc}:00.000Z`) <= Date.now();
+  const guidance = $("#restore-guidance");
+  guidance.textContent = restoring && occurrenceExpired
+    ? "This one-time occurrence has expired. Choose a future date or time before restoring it."
+    : restoring
+      ? "Review the schedule settings before restoring this reminder."
+      : "";
+  guidance.classList.toggle("hidden", !restoring);
   $("#form-error").textContent = "";
   updateScheduleTypeControls();
   dialog.showModal();
@@ -188,6 +256,7 @@ async function saveEvent(event) {
   event.preventDefault();
   const button = event.submitter;
   const id = $("#event-id").value;
+  const restoring = $("#event-action").value === "restore";
   const payload = {
     name: $("#event-name").value,
     schedule_type: $("#schedule-type").value,
@@ -202,12 +271,15 @@ async function saveEvent(event) {
   button.disabled = true;
   $("#form-error").textContent = "";
   try {
-    await api(id ? `${REMINDERS_API_PATH}/${id}` : REMINDERS_API_PATH, {
-      method: id ? "PUT" : "POST",
+    const path = restoring
+      ? `${ARCHIVE_API_PATH}/${id}`
+      : id ? `${REMINDERS_API_PATH}/${id}` : REMINDERS_API_PATH;
+    await api(path, {
+      method: restoring || id ? "PUT" : "POST",
       body: payload,
     });
     dialog.close();
-    toast(id ? "Event updated." : "Event added.");
+    toast(restoring ? "Reminder restored." : id ? "Event updated." : "Event added.");
     await loadDashboard();
   } catch (error) {
     $("#form-error").textContent = error.message;
@@ -232,15 +304,36 @@ function oneTimeStatus(event) {
   return event.enabled ? "Scheduled once" : "Disabled";
 }
 
-async function removeEvent(event) {
-  if (!confirm(`Delete “${event.name}” and its delivery history?`)) return;
+async function archiveEvent(event) {
+  if (!confirm(`Archive “${event.name}”? Its delivery history will be retained.`)) return;
   try {
     await api(`${REMINDERS_API_PATH}/${event.id}`, { method: "DELETE" });
-    toast("Event deleted.");
+    toast("Reminder archived.");
     await loadDashboard();
   } catch (error) {
     toast(error.message);
   }
+}
+
+async function permanentlyDeleteEvent(event) {
+  if (!confirm(`Permanently delete “${event.name}” and its delivery history? This cannot be undone.`)) return;
+  try {
+    await api(`${ARCHIVE_API_PATH}/${event.id}`, { method: "DELETE" });
+    toast("Archived reminder permanently deleted.");
+    await loadDashboard();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function showArchive() {
+  $("#schedule-panel").classList.add("hidden");
+  $("#archive-panel").classList.remove("hidden");
+}
+
+function showSchedule() {
+  $("#archive-panel").classList.add("hidden");
+  $("#schedule-panel").classList.remove("hidden");
 }
 
 async function api(path, options = {}) {
