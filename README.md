@@ -4,7 +4,7 @@ A standalone Cloudflare Worker with:
 
 - a shared-password dashboard;
 - D1-backed event creation, editing, soft archiving and restoration;
-- permanent deletion restricted to the Archive view;
+- permanent deletion restricted to the Archive view, with delivery history retained;
 - explicit recurring and one-time UTC reminder schedules;
 - one UTC Cron Trigger running every minute;
 - Discord webhook delivery with retry history;

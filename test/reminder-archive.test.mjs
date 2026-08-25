@@ -9,6 +9,7 @@ const migrationPaths = [
   "../migrations/0001_initial.sql",
   "../migrations/0002_one_time_reminders.sql",
   "../migrations/0003_reminder_archive.sql",
+  "../migrations/0004_preserve_deleted_delivery_history.sql",
 ];
 
 test("normal deletion soft-archives a reminder and preserves delivery history", async () => {
@@ -36,7 +37,7 @@ test("normal deletion soft-archives a reminder and preserves delivery history", 
   assert.equal(archive.events.some(({ id }) => id === eventId), true);
 });
 
-test("permanent deletion is restricted to Archive and removes retained history", async () => {
+test("permanent deletion is restricted to Archive and preserves retained history", async () => {
   const context = await createContext();
   const eventId = insertEvent(context.database, { name: "Delete from archive" });
   insertDelivery(context.database, eventId, "Delete from archive");
@@ -59,6 +60,13 @@ test("permanent deletion is restricted to Archive and removes retained history",
     context.database.prepare("SELECT COUNT(*) AS count FROM deliveries WHERE event_id = ?").get(eventId).count,
     0,
   );
+  const retained = context.database.prepare(
+    "SELECT event_id, event_name FROM deliveries WHERE event_name = ?",
+  ).get("Delete from archive");
+  assert.deepEqual({ ...retained }, {
+    event_id: null,
+    event_name: "Delete from archive",
+  });
 });
 
 test("expired one-time reminders require a future schedule before restoration", async () => {
@@ -168,6 +176,16 @@ test("archive migration is backward-compatible and indexed", async () => {
   assert.match(migration, /ADD COLUMN archived_reason TEXT/);
   assert.match(migration, /'manual', 'expired'/);
   assert.match(migration, /CREATE INDEX IF NOT EXISTS idx_events_archive/);
+});
+
+test("delivery-history migration retains rows after parent deletion", async () => {
+  const migration = await readFile(
+    new URL("../migrations/0004_preserve_deleted_delivery_history.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(migration, /event_id INTEGER,/);
+  assert.match(migration, /ON DELETE SET NULL/);
+  assert.match(migration, /INSERT INTO deliveries_with_retained_history/);
 });
 
 async function createContext() {

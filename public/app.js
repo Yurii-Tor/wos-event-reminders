@@ -316,10 +316,10 @@ async function archiveEvent(event) {
 }
 
 async function permanentlyDeleteEvent(event) {
-  if (!confirm(`Permanently delete “${event.name}” and its delivery history? This cannot be undone.`)) return;
+  if (!confirm(`Permanently delete “${event.name}”? Its delivery history will be retained.`)) return;
   try {
     await api(`${ARCHIVE_API_PATH}/${event.id}`, { method: "DELETE" });
-    toast("Archived reminder permanently deleted.");
+    toast("Reminder permanently deleted. Delivery history retained.");
     await loadDashboard();
   } catch (error) {
     toast(error.message);

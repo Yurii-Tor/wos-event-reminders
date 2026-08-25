@@ -302,18 +302,11 @@ export async function restoreArchivedEvent(request, env, id) {
 }
 
 export async function permanentlyDeleteEvent(env, id) {
-  const [, result] = await env.DB.batch([
-    env.DB.prepare(
-      `DELETE FROM deliveries
-        WHERE event_id = ?
-          AND EXISTS (
-            SELECT 1 FROM events WHERE id = ? AND archived_at IS NOT NULL
-          )`,
-    ).bind(id, id),
-    env.DB.prepare(
-      "DELETE FROM events WHERE id = ? AND archived_at IS NOT NULL",
-    ).bind(id),
-  ]);
+  const result = await env.DB.prepare(
+    "DELETE FROM events WHERE id = ? AND archived_at IS NOT NULL",
+  )
+    .bind(id)
+    .run();
   if (!result.meta.changes) return json({ error: "Archived event not found" }, 404);
   return json({ ok: true });
 }
