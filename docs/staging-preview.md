@@ -7,19 +7,30 @@ always use the named `staging` environment, which creates the separate Worker
 
 ## One-time Cloudflare setup
 
-1. In **Workers & Pages → wos-event-reminders → Settings → Build**, set the
-   **Non-production branch deploy command** to:
+1. In **Workers & Pages → wos-event-reminders → Settings → Build**, disable
+   **Builds for non-production branches**. The production Worker must never
+   build feature branches because Workers Builds overrides the Wrangler Worker
+   name and would reuse the production secret namespace.
+
+2. In **Workers & Pages → wos-event-reminders-staging → Settings → Build**,
+   connect the same Git repository and configure:
+
+   - production branch: the repository default branch;
+   - preview builds: enabled;
+   - build command: `npm test`;
+   - deploy command: `npm run preview:staging`;
+   - version command: `npm run preview:staging`.
+
+   The preview command runs:
 
    ```text
-   npm run preview:staging
+   wrangler versions upload --env staging --name wos-event-reminders-staging
    ```
 
-   This runs `wrangler versions upload --env staging --name
-   wos-event-reminders-staging`. The explicit name prevents Workers Builds from
-   overriding the environment-derived Worker name. Keep the production deploy
-   command unchanged.
+   The explicit name provides defense in depth if Workers Builds overrides the
+   environment-derived Worker name.
 
-2. Enter three staging-only secrets interactively. Use a Discord webhook that
+3. Enter three staging-only secrets interactively. Use a Discord webhook that
    posts only to a staging/test channel. Never reuse the production webhook or
    paste secret values into source files, Git, build variables, chat, or logs.
 
@@ -32,7 +43,7 @@ always use the named `staging` environment, which creates the separate Worker
    The `staging` environment is a separate Worker, so its secrets do not inherit
    from the production Worker.
 
-3. Apply migrations only through the staging-specific command:
+4. Apply migrations only through the staging-specific command:
 
    ```powershell
    npm run db:staging:migrate
