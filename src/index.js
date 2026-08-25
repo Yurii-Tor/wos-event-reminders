@@ -2,6 +2,8 @@ const SESSION_COOKIE = "wos_session";
 const SESSION_SECONDS = 8 * 60 * 60;
 const DELIVERY_GRACE_MS = 5 * 60 * 1000;
 const MAX_DELIVERY_ATTEMPTS = 3;
+const REMINDERS_API_PATH = "/api/reminders";
+const LEGACY_EVENTS_API_PATH = "/api/events";
 
 export default {
   async fetch(request, env) {
@@ -36,21 +38,22 @@ export default {
         );
       }
 
-      if (url.pathname === "/api/events" && request.method === "GET") {
+      const reminderRoute = matchReminderApiPath(url.pathname);
+
+      if (reminderRoute?.id === null && request.method === "GET") {
         await normalizeOverdueEvents(env, Date.now());
         return listEvents(env);
       }
 
-      if (url.pathname === "/api/events" && request.method === "POST") {
+      if (reminderRoute?.id === null && request.method === "POST") {
         return createEvent(request, env);
       }
 
-      const eventMatch = url.pathname.match(/^\/api\/reminders\/(\d+)$/);
-      if (eventMatch && request.method === "PUT") {
-        return updateEvent(request, env, Number(eventMatch[1]));
+      if (reminderRoute && reminderRoute.id !== null && request.method === "PUT") {
+        return updateEvent(request, env, reminderRoute.id);
       }
-      if (eventMatch && request.method === "DELETE") {
-        return deleteEvent(env, Number(eventMatch[1]));
+      if (reminderRoute && reminderRoute.id !== null && request.method === "DELETE") {
+        return deleteEvent(env, reminderRoute.id);
       }
 
       if (url.pathname === "/api/deliveries" && request.method === "GET") {
@@ -76,6 +79,15 @@ export default {
     await processDueEvents(env, controller.scheduledTime || Date.now());
   },
 };
+
+export function matchReminderApiPath(pathname) {
+  if (pathname === REMINDERS_API_PATH || pathname === LEGACY_EVENTS_API_PATH) {
+    return { id: null };
+  }
+
+  const match = pathname.match(/^\/api\/(?:reminders|events)\/(\d+)$/);
+  return match ? { id: Number(match[1]) } : null;
+}
 
 async function login(request, env) {
   if (!hasValidOrigin(request)) {

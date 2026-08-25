@@ -1,5 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const state = { events: [], deliveries: [] };
+const REMINDERS_API_PATH = "/api/reminders";
 
 const loginView = $("#login-view");
 const appView = $("#app-view");
@@ -65,9 +66,13 @@ async function onSendTest() {
 }
 
 async function loadDashboard() {
+  const dashboardError = $("#dashboard-error");
+  dashboardError.textContent = "";
+  dashboardError.classList.add("hidden");
+
   try {
     const [eventsResult, deliveriesResult] = await Promise.all([
-      api("/api/events"),
+      api(REMINDERS_API_PATH),
       api("/api/deliveries"),
     ]);
     state.events = eventsResult.events;
@@ -77,7 +82,12 @@ async function loadDashboard() {
     renderSummary();
   } catch (error) {
     if (error.status === 401) showLogin();
-    else toast(error.message);
+    else {
+      const message = `Dashboard data could not be loaded: ${error.message}`;
+      dashboardError.textContent = message;
+      dashboardError.classList.remove("hidden");
+      toast(message);
+    }
   }
 }
 
@@ -174,7 +184,7 @@ async function saveEvent(event) {
   button.disabled = true;
   $("#form-error").textContent = "";
   try {
-    await api(id ? `/api/events/${id}` : "/api/events", {
+    await api(id ? `${REMINDERS_API_PATH}/${id}` : REMINDERS_API_PATH, {
       method: id ? "PUT" : "POST",
       body: payload,
     });
@@ -191,7 +201,7 @@ async function saveEvent(event) {
 async function removeEvent(event) {
   if (!confirm(`Delete “${event.name}” and its delivery history?`)) return;
   try {
-    await api(`/api/events/${event.id}`, { method: "DELETE" });
+    await api(`${REMINDERS_API_PATH}/${event.id}`, { method: "DELETE" });
     toast("Event deleted.");
     await loadDashboard();
   } catch (error) {
@@ -200,12 +210,17 @@ async function removeEvent(event) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    method: options.method || "GET",
-    credentials: "same-origin",
-    headers: options.body ? { "Content-Type": "application/json" } : undefined,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      method: options.method || "GET",
+      credentials: "same-origin",
+      headers: options.body ? { "Content-Type": "application/json" } : undefined,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+  } catch (cause) {
+    throw new Error(`Could not reach ${path}: ${cause?.message || "network request failed"}`, { cause });
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data.error || `Request failed (${response.status})`);
